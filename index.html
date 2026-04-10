@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Browser Image Download Tester</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0e0f13;
+    --surface: #16171d;
+    --surface-2: #1e2028;
+    --border: #2a2c36;
+    --text: #e4e4e8;
+    --text-dim: #8b8d9a;
+    --accent: #6ee7b7;
+    --accent-dim: rgba(110, 231, 183, 0.12);
+    --warn: #fbbf24;
+    --error: #f87171;
+    --radius: 10px;
+  }
+
+  body {
+    font-family: 'IBM Plex Sans JP', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100dvh;
+    padding: 20px 16px 40px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .header { text-align: center; margin-bottom: 28px; padding-top: 12px; }
+  .header h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .header p { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+
+  .ua-box {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 14px; margin-bottom: 20px;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-dim);
+    word-break: break-all; line-height: 1.5;
+  }
+  .ua-box .label { color: var(--accent); font-weight: 500; display: block; margin-bottom: 4px; font-size: 11px; }
+
+  .controls {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; margin-bottom: 20px;
+  }
+  .controls h2 { font-size: 13px; font-weight: 600; margin-bottom: 14px; color: var(--accent); }
+
+  .field { margin-bottom: 14px; }
+  .field:last-child { margin-bottom: 0; }
+  .field label { display: block; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
+  .field select, .field input {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px; color: var(--text);
+    font-size: 14px; font-family: inherit; outline: none; -webkit-appearance: none;
+  }
+  .field select:focus, .field input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+
+  .method-desc {
+    font-size: 11px; color: var(--text-dim); line-height: 1.6;
+    padding: 10px 14px; background: var(--accent-dim); border-radius: 6px; margin-bottom: 14px;
+  }
+
+  .preview-area {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 8px;
+    margin-bottom: 20px;
+  }
+  .preview-area img {
+    width: 100%; aspect-ratio: 4/3; object-fit: cover;
+    border-radius: 6px; border: 1px solid var(--border);
+  }
+  .preview-label {
+    font-size: 11px; color: var(--text-dim); margin-bottom: 8px;
+  }
+
+  .btn {
+    display: flex; align-items: center; justify-content: center; width: 100%;
+    padding: 14px 12px; border: none; border-radius: var(--radius);
+    font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
+    transition: transform 0.1s, opacity 0.15s; -webkit-tap-highlight-color: transparent;
+    background: var(--accent); color: #0e0f13; margin-bottom: 12px;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.4; pointer-events: none; }
+  .btn-secondary {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+  }
+
+  .log-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .log-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+  .log-header h2 { font-size: 13px; font-weight: 600; color: var(--accent); }
+  .log-clear { font-size: 11px; color: var(--text-dim); background: none; border: none; cursor: pointer; font-family: inherit; }
+
+  #log { padding: 10px 14px; max-height: 50vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .log-entry {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; line-height: 1.6;
+    padding: 4px 0; border-bottom: 1px solid rgba(42, 44, 54, 0.5); display: flex; gap: 8px;
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-time { color: var(--text-dim); white-space: nowrap; }
+  .log-msg { word-break: break-all; }
+  .log-info { color: var(--text); }
+  .log-ok { color: var(--accent); }
+  .log-warn { color: var(--warn); }
+  .log-err { color: var(--error); }
+  .empty-log { text-align: center; padding: 30px 14px; color: var(--text-dim); font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Browser Image Download Tester</h1>
+  <p>複数画像の一括ダウンロード挙動をブラウザごとに検証</p>
+</div>
+
+<div class="ua-box">
+  <span class="label">UserAgent</span>
+  <span id="ua"></span>
+</div>
+
+<div class="controls">
+  <h2>Settings</h2>
+
+  <div class="method-desc">
+    Canvas で画像を生成 → Blob 化 → URL.createObjectURL → &lt;a download&gt; でダウンロードをトリガー。各 DL 間に指定 delay を挿入。
+  </div>
+
+  <div class="field">
+    <label>画像フォーマット</label>
+    <select id="format">
+      <option value="image/png">PNG</option>
+      <option value="image/jpeg">JPEG</option>
+      <option value="image/webp">WebP</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label>ダウンロード枚数</label>
+    <select id="count">
+      <option value="1">1枚</option>
+      <option value="3" selected>3枚</option>
+      <option value="5">5枚</option>
+      <option value="10">10枚</option>
+    </select>
+  </div>
+
+  <div class="field">
+    <label>各DL間の遅延 (ms)</label>
+    <input type="number" id="delay" value="500" min="0" max="5000" step="100">
+  </div>
+</div>
+
+<div class="preview-label" id="previewLabel" style="display:none;">生成された画像プレビュー:</div>
+<div class="preview-area" id="preview"></div>
+
+<button class="btn" id="startBtn" onclick="startDownload()">Download Start</button>
+
+<div class="log-section">
+  <div class="log-header">
+    <h2>Log</h2>
+    <button class="log-clear" onclick="clearLog()">clear</button>
+  </div>
+  <div id="log">
+    <div class="empty-log">ダウンロードを実行するとログが表示されます</div>
+  </div>
+</div>
+
+<script>
+  document.getElementById('ua').textContent = navigator.userAgent;
+
+  /* ---------- Logger ---------- */
+  const logEl = document.getElementById('log');
+  let hasLogs = false;
+
+  function log(msg, level = 'info') {
+    if (!hasLogs) { logEl.innerHTML = ''; hasLogs = true; }
+    const t = new Date().toLocaleTimeString('ja-JP', {
+      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3
+    });
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML =
+      '<span class="log-time">' + t + '</span>' +
+      '<span class="log-msg log-' + level + '">' + msg + '</span>';
+    logEl.appendChild(entry);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function clearLog() {
+    logEl.innerHTML = '<div class="empty-log">ダウンロードを実行するとログが表示されます</div>';
+    hasLogs = false;
+  }
+
+  /* ---------- Utilities ---------- */
+  function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  function extFromMime(mime) {
+    if (mime === 'image/jpeg') return 'jpg';
+    if (mime === 'image/webp') return 'webp';
+    return 'png';
+  }
+
+  /* ---------- Canvas Image Generator ---------- */
+  function generateCanvasBlob(index, mime) {
+    return new Promise(function (resolve, reject) {
+      try {
+        var canvas = document.createElement('canvas');
+        canvas.width = 400;
+        canvas.height = 300;
+        var ctx = canvas.getContext('2d');
+        var hue = (index * 67 + 10) % 360;
+
+        // Background gradient
+        var grad = ctx.createLinearGradient(0, 0, 400, 300);
+        grad.addColorStop(0, 'hsl(' + hue + ', 55%, 22%)');
+        grad.addColorStop(1, 'hsl(' + ((hue + 40) % 360) + ', 55%, 18%)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 400, 300);
+
+        // Decorative circles
+        for (var i = 0; i < 6; i++) {
+          ctx.beginPath();
+          ctx.arc(200, 150, 30 + i * 20, 0, Math.PI * 2);
+          ctx.strokeStyle = 'hsla(' + hue + ', 70%, 60%, ' + (0.15 + i * 0.03) + ')';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        // Index label
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 36px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('#' + (index + 1), 200, 130);
+
+        // Format & timestamp
+        ctx.font = '14px monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.fillText(extFromMime(mime).toUpperCase() + '  |  ' + new Date().toLocaleTimeString(), 200, 175);
+
+        // Identifier bar
+        ctx.fillStyle = 'hsla(' + hue + ', 60%, 50%, 0.5)';
+        ctx.fillRect(0, 270, 400, 30);
+        ctx.fillStyle = '#fff';
+        ctx.font = '11px monospace';
+        ctx.fillText('Browser Download Test  —  Image ' + (index + 1), 200, 288);
+
+        canvas.toBlob(function (blob) {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('canvas.toBlob returned null for ' + mime));
+          }
+        }, mime, 0.92);
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+
+  /* ---------- Download trigger ---------- */
+  function triggerDownload(blob, filename) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    // Some browsers need the element to be in DOM
+    a.style.position = 'fixed';
+    a.style.left = '-9999px';
+    a.style.opacity = '0';
+    document.body.appendChild(a);
+
+    // Use a small timeout so the browser can register the element
+    setTimeout(function () {
+      a.click();
+      // Keep the object URL alive long enough for the browser to use it
+      setTimeout(function () {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 10000);
+    }, 50);
+  }
+
+  /* ---------- Preview ---------- */
+  function showPreview(blobs) {
+    var previewEl = document.getElementById('preview');
+    var labelEl = document.getElementById('previewLabel');
+    previewEl.innerHTML = '';
+    labelEl.style.display = 'block';
+    blobs.forEach(function (blob) {
+      var img = document.createElement('img');
+      img.src = URL.createObjectURL(blob);
+      previewEl.appendChild(img);
+    });
+  }
+
+  /* ---------- Main ---------- */
+  async function startDownload() {
+    var btn = document.getElementById('startBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+
+    var mime = document.getElementById('format').value;
+    var count = parseInt(document.getElementById('count').value, 10);
+    var delay = parseInt(document.getElementById('delay').value, 10) || 500;
+    var ext = extFromMime(mime);
+
+    log('--- 開始: format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
+
+    // Step 1: Generate all blobs upfront
+    var blobs = [];
+    for (var i = 0; i < count; i++) {
+      try {
+        log('[' + (i + 1) + '/' + count + '] Canvas → Blob 生成中...');
+        var blob = await generateCanvasBlob(i, mime);
+        blobs.push(blob);
+        log('[' + (i + 1) + '/' + count + '] Blob 生成完了: ' + blob.type + ', ' + (blob.size / 1024).toFixed(1) + 'KB', 'ok');
+      } catch (e) {
+        log('[' + (i + 1) + '/' + count + '] Blob 生成失敗: ' + e.message, 'err');
+      }
+    }
+
+    if (blobs.length === 0) {
+      log('画像生成に全て失敗しました', 'err');
+      btn.disabled = false;
+      btn.textContent = 'Download Start';
+      return;
+    }
+
+    // Show preview
+    showPreview(blobs);
+    log(blobs.length + '枚の画像プレビューを表示', 'info');
+
+    // Step 2: Trigger downloads sequentially with delay
+    btn.textContent = 'Downloading...';
+    for (var j = 0; j < blobs.length; j++) {
+      var filename = 'test_' + (j + 1) + '.' + ext;
+      log('[' + (j + 1) + '/' + blobs.length + '] triggerDownload("' + filename + '")', 'ok');
+      triggerDownload(blobs[j], filename);
+
+      if (j < blobs.length - 1) {
+        log(delay + 'ms 待機...', 'warn');
+        await sleep(delay);
+      }
+    }
+
+    log('--- 全 ' + blobs.length + ' 件のダウンロードをトリガー完了 ---', 'ok');
+    btn.disabled = false;
+    btn.textContent = 'Download Start';
+  }
+</script>
+
+</body>
+</html>
