@@ -152,10 +152,10 @@
   <div class="field">
     <label>画像サイズ</label>
     <select id="resolution">
-      <option value="400x300">400×300（軽量 ~5KB）</option>
-      <option value="1280x960">1280×960（中 ~50KB）</option>
-      <option value="1920x1440" selected>1920×1440（大 ~200KB）</option>
-      <option value="3840x2880">3840×2880（4K相当 ~800KB）</option>
+      <option value="400x300">400×300（~100KB）</option>
+      <option value="1280x960">1280×960（~1MB）</option>
+      <option value="1920x1440" selected>1920×1440（~3MB）</option>
+      <option value="3840x2880">3840×2880（~10MB）</option>
     </select>
   </div>
 
@@ -332,6 +332,16 @@
         ctx.fillStyle = '#fff';
         ctx.font = Math.round(11 * scale) + 'px monospace';
         ctx.fillText('Browser Download Test  —  Image ' + (index + 1), cx, H - barH / 2);
+
+        // Per-pixel noise to make file size realistically large
+        var imageData = ctx.getImageData(0, 0, W, H);
+        var data = imageData.data;
+        for (var p = 0; p < data.length; p += 4) {
+          data[p]     = Math.min(255, Math.max(0, data[p]     + (Math.random() * 30 - 15) | 0));
+          data[p + 1] = Math.min(255, Math.max(0, data[p + 1] + (Math.random() * 30 - 15) | 0));
+          data[p + 2] = Math.min(255, Math.max(0, data[p + 2] + (Math.random() * 30 - 15) | 0));
+        }
+        ctx.putImageData(imageData, 0, 0);
 
         canvas.toBlob(function (blob) {
           if (blob) {
