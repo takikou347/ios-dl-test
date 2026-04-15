@@ -486,7 +486,8 @@
     var method = document.getElementById('method').value;
     var mime = document.getElementById('format').value;
     var count = parseInt(document.getElementById('count').value, 10);
-    var delay = parseInt(document.getElementById('delay').value, 10) || 500;
+    var delayRaw = parseInt(document.getElementById('delay').value, 10);
+    var delay = isNaN(delayRaw) ? 500 : delayRaw;
     var ext = extFromMime(mime);
 
     log('--- 開始: method=' + method + ', format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
