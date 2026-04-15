@@ -125,7 +125,15 @@
 <div class="controls">
   <h2>Settings</h2>
 
-  <div class="method-desc">
+  <div class="field">
+    <label>ダウンロード方式</label>
+    <select id="method" onchange="updateMethodDesc()">
+      <option value="a-download">&lt;a download&gt; 方式（従来）</option>
+      <option value="share">Share API 方式（シェアシート）</option>
+    </select>
+  </div>
+
+  <div class="method-desc" id="methodDesc">
     Canvas で画像を生成 → Blob 化 → URL.createObjectURL → &lt;a download&gt; でダウンロードをトリガー。各 DL 間に指定 delay を挿入。
   </div>
 
@@ -171,6 +179,18 @@
 
 <script>
   document.getElementById('ua').textContent = navigator.userAgent;
+
+  /* ---------- Method description toggle ---------- */
+  function updateMethodDesc() {
+    var method = document.getElementById('method').value;
+    var desc = document.getElementById('methodDesc');
+    if (method === 'share') {
+      desc.innerHTML = 'Canvas で画像を生成 → Blob → File 化 → <b>navigator.share({ files })</b> でシェアシートを表示。' +
+        '「写真に保存」「ファイルに保存」等から保存。API 追加なし。';
+    } else {
+      desc.innerHTML = 'Canvas で画像を生成 → Blob 化 → URL.createObjectURL → &lt;a download&gt; でダウンロードをトリガー。各 DL 間に指定 delay を挿入。';
+    }
+  }
 
   /* ---------- Logger ---------- */
   const logEl = document.getElementById('log');
@@ -264,6 +284,32 @@
     });
   }
 
+  /* ---------- Visibility / Lock detection ---------- */
+  (function () {
+    var sessionStart = Date.now();
+
+    document.addEventListener('visibilitychange', function () {
+      var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+      if (document.visibilityState === 'hidden') {
+        log('[visibility] ページが非表示になりました (hidden) — elapsed ' + elapsed + 's', 'warn');
+      } else {
+        log('[visibility] ページが再表示されました (visible) — elapsed ' + elapsed + 's', 'ok');
+      }
+    });
+
+    window.addEventListener('pagehide', function (e) {
+      var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+      log('[pagehide] persisted=' + e.persisted + ' — elapsed ' + elapsed + 's', 'warn');
+    });
+
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) {
+        var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+        log('[pageshow] bfcache から復帰 — elapsed ' + elapsed + 's', 'ok');
+      }
+    });
+  })();
+
   /* ---------- Download trigger ---------- */
   function triggerDownload(blob, filename) {
     var url = URL.createObjectURL(blob);
@@ -300,18 +346,62 @@
     });
   }
 
+  /* ---------- Share API trigger ---------- */
+  async function triggerShareDownload(blobs, ext, mime) {
+    // Convert Blobs to File objects (required by navigator.share)
+    var files = blobs.map(function (blob, i) {
+      return new File([blob], 'test_' + (i + 1) + '.' + ext, { type: mime });
+    });
+
+    log('File オブジェクト ' + files.length + ' 件を生成', 'info');
+
+    // Check if sharing files is supported
+    if (!navigator.canShare) {
+      log('navigator.canShare が未サポートです', 'err');
+      return false;
+    }
+
+    if (!navigator.canShare({ files: files })) {
+      log('このブラウザではファイルのシェアがサポートされていません', 'err');
+      return false;
+    }
+
+    log('navigator.canShare({ files }) = true ✓', 'ok');
+    log('navigator.share() を呼び出し — シェアシートが表示されます...', 'ok');
+
+    var t0 = performance.now();
+    try {
+      await navigator.share({
+        title: 'Download Test Images',
+        files: files
+      });
+      var elapsed = (performance.now() - t0).toFixed(0);
+      log('シェア完了 (ユーザーが保存/共有を実行) — ' + elapsed + 'ms', 'ok');
+      return true;
+    } catch (e) {
+      var elapsed = (performance.now() - t0).toFixed(0);
+      if (e.name === 'AbortError') {
+        log('シェアがキャンセルされました — ' + elapsed + 'ms', 'warn');
+      } else {
+        log('シェア失敗: ' + e.name + ': ' + e.message + ' — ' + elapsed + 'ms', 'err');
+      }
+      return false;
+    }
+  }
+
   /* ---------- Main ---------- */
   async function startDownload() {
     var btn = document.getElementById('startBtn');
     btn.disabled = true;
     btn.textContent = 'Generating...';
 
+    var method = document.getElementById('method').value;
     var mime = document.getElementById('format').value;
     var count = parseInt(document.getElementById('count').value, 10);
     var delay = parseInt(document.getElementById('delay').value, 10) || 500;
     var ext = extFromMime(mime);
 
-    log('--- 開始: format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
+    log('--- 開始: method=' + method + ', format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
 
     // Step 1: Generate all blobs upfront
     var blobs = [];
@@ -337,20 +427,27 @@
     showPreview(blobs);
     log(blobs.length + '枚の画像プレビューを表示', 'info');
 
-    // Step 2: Trigger downloads sequentially with delay
+    // Step 2: Trigger downloads based on method
     btn.textContent = 'Downloading...';
-    for (var j = 0; j < blobs.length; j++) {
-      var filename = 'test_' + (j + 1) + '.' + ext;
-      log('[' + (j + 1) + '/' + blobs.length + '] triggerDownload("' + filename + '")', 'ok');
-      triggerDownload(blobs[j], filename);
 
-      if (j < blobs.length - 1) {
-        log(delay + 'ms 待機...', 'warn');
-        await sleep(delay);
+    if (method === 'share') {
+      // Share API: single share sheet with all files
+      await triggerShareDownload(blobs, ext, mime);
+    } else {
+      // Traditional: sequential <a download> triggers
+      for (var j = 0; j < blobs.length; j++) {
+        var filename = 'test_' + (j + 1) + '.' + ext;
+        log('[' + (j + 1) + '/' + blobs.length + '] triggerDownload("' + filename + '")', 'ok');
+        triggerDownload(blobs[j], filename);
+
+        if (j < blobs.length - 1) {
+          log(delay + 'ms 待機...', 'warn');
+          await sleep(delay);
+        }
       }
     }
 
-    log('--- 全 ' + blobs.length + ' 件のダウンロードをトリガー完了 ---', 'ok');
+    log('--- 全 ' + blobs.length + ' 件の処理完了 ---', 'ok');
     btn.disabled = false;
     btn.textContent = 'Download Start';
   }
