@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>Browser Image Download Tester</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -125,7 +126,17 @@
 <div class="controls">
   <h2>Settings</h2>
 
-  <div class="method-desc">
+  <div class="field">
+    <label>ダウンロード方式</label>
+    <select id="method" onchange="updateMethodDesc()">
+      <option value="a-download">&lt;a download&gt; 方式（従来）</option>
+      <option value="share">Share API 方式（シェアシート）</option>
+      <option value="zip-download">ZIP → &lt;a download&gt; 方式</option>
+      <option value="zip-share">ZIP → Share API 方式</option>
+    </select>
+  </div>
+
+  <div class="method-desc" id="methodDesc">
     Canvas で画像を生成 → Blob 化 → URL.createObjectURL → &lt;a download&gt; でダウンロードをトリガー。各 DL 間に指定 delay を挿入。
   </div>
 
@@ -171,6 +182,19 @@
 
 <script>
   document.getElementById('ua').textContent = navigator.userAgent;
+
+  /* ---------- Method description toggle ---------- */
+  function updateMethodDesc() {
+    var method = document.getElementById('method').value;
+    var desc = document.getElementById('methodDesc');
+    var descriptions = {
+      'a-download': 'Canvas で画像を生成 → Blob 化 → URL.createObjectURL → &lt;a download&gt; でダウンロードをトリガー。各 DL 間に指定 delay を挿入。',
+      'share': 'Canvas で画像を生成 → Blob → File 化 → <b>navigator.share({ files })</b> でシェアシートを表示。「写真に保存」「ファイルに保存」等から保存。API 追加なし。',
+      'zip-download': 'Canvas で画像を生成 → <b>JSZip</b> でクライアント側 ZIP 作成 → &lt;a download&gt; で ZIP ファイルをダウンロード。1回のDLで複数画像を取得。',
+      'zip-share': 'Canvas で画像を生成 → <b>JSZip</b> でクライアント側 ZIP 作成 → <b>navigator.share({ files })</b> で ZIP をシェア。ZIP + Share の組み合わせ検証。'
+    };
+    desc.innerHTML = descriptions[method] || '';
+  }
 
   /* ---------- Logger ---------- */
   const logEl = document.getElementById('log');
@@ -264,6 +288,32 @@
     });
   }
 
+  /* ---------- Visibility / Lock detection ---------- */
+  (function () {
+    var sessionStart = Date.now();
+
+    document.addEventListener('visibilitychange', function () {
+      var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+      if (document.visibilityState === 'hidden') {
+        log('[visibility] ページが非表示になりました (hidden) — elapsed ' + elapsed + 's', 'warn');
+      } else {
+        log('[visibility] ページが再表示されました (visible) — elapsed ' + elapsed + 's', 'ok');
+      }
+    });
+
+    window.addEventListener('pagehide', function (e) {
+      var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+      log('[pagehide] persisted=' + e.persisted + ' — elapsed ' + elapsed + 's', 'warn');
+    });
+
+    window.addEventListener('pageshow', function (e) {
+      if (e.persisted) {
+        var elapsed = ((Date.now() - sessionStart) / 1000).toFixed(1);
+        log('[pageshow] bfcache から復帰 — elapsed ' + elapsed + 's', 'ok');
+      }
+    });
+  })();
+
   /* ---------- Download trigger ---------- */
   function triggerDownload(blob, filename) {
     var url = URL.createObjectURL(blob);
@@ -300,18 +350,146 @@
     });
   }
 
+  /* ---------- ZIP generation ---------- */
+  async function generateZip(blobs, ext, mime) {
+    if (typeof JSZip === 'undefined') {
+      log('JSZip ライブラリが読み込まれていません', 'err');
+      return null;
+    }
+
+    var zip = new JSZip();
+    var t0 = performance.now();
+
+    for (var i = 0; i < blobs.length; i++) {
+      var filename = 'test_' + (i + 1) + '.' + ext;
+      zip.file(filename, blobs[i]);
+      log('[ZIP] ' + filename + ' を追加 (' + (blobs[i].size / 1024).toFixed(1) + 'KB)', 'info');
+    }
+
+    log('[ZIP] 圧縮中 (DEFLATE)...', 'info');
+    try {
+      var zipBlob = await zip.generateAsync({
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 6 }
+      }, function (metadata) {
+        if (metadata.percent % 25 < 1) {
+          log('[ZIP] 進捗: ' + metadata.percent.toFixed(0) + '%', 'info');
+        }
+      });
+      var elapsed = (performance.now() - t0).toFixed(0);
+      log('[ZIP] 生成完了: ' + (zipBlob.size / 1024).toFixed(1) + 'KB — ' + elapsed + 'ms', 'ok');
+      return zipBlob;
+    } catch (e) {
+      log('[ZIP] 生成失敗: ' + e.message, 'err');
+      return null;
+    }
+  }
+
+  async function triggerZipDownload(blobs, ext, mime) {
+    var zipBlob = await generateZip(blobs, ext, mime);
+    if (!zipBlob) return false;
+
+    var filename = 'test_images_' + blobs.length + '枚_' + ext + '.zip';
+    log('[ZIP-DL] triggerDownload("' + filename + '")', 'ok');
+    triggerDownload(zipBlob, filename);
+    return true;
+  }
+
+  async function triggerZipShare(blobs, ext, mime) {
+    var zipBlob = await generateZip(blobs, ext, mime);
+    if (!zipBlob) return false;
+
+    var filename = 'test_images_' + blobs.length + '枚_' + ext + '.zip';
+    var file = new File([zipBlob], filename, { type: 'application/zip' });
+
+    if (!navigator.canShare) {
+      log('navigator.canShare が未サポートです', 'err');
+      return false;
+    }
+
+    if (!navigator.canShare({ files: [file] })) {
+      log('このブラウザでは ZIP ファイルのシェアがサポートされていません', 'err');
+      return false;
+    }
+
+    log('[ZIP-Share] navigator.share() を呼び出し...', 'ok');
+    var t0 = performance.now();
+    try {
+      await navigator.share({
+        title: 'Download Test Images (ZIP)',
+        files: [file]
+      });
+      var elapsed = (performance.now() - t0).toFixed(0);
+      log('[ZIP-Share] シェア完了 — ' + elapsed + 'ms', 'ok');
+      return true;
+    } catch (e) {
+      var elapsed = (performance.now() - t0).toFixed(0);
+      if (e.name === 'AbortError') {
+        log('[ZIP-Share] シェアがキャンセルされました — ' + elapsed + 'ms', 'warn');
+      } else {
+        log('[ZIP-Share] シェア失敗: ' + e.name + ': ' + e.message + ' — ' + elapsed + 'ms', 'err');
+      }
+      return false;
+    }
+  }
+
+  /* ---------- Share API trigger ---------- */
+  async function triggerShareDownload(blobs, ext, mime) {
+    // Convert Blobs to File objects (required by navigator.share)
+    var files = blobs.map(function (blob, i) {
+      return new File([blob], 'test_' + (i + 1) + '.' + ext, { type: mime });
+    });
+
+    log('File オブジェクト ' + files.length + ' 件を生成', 'info');
+
+    // Check if sharing files is supported
+    if (!navigator.canShare) {
+      log('navigator.canShare が未サポートです', 'err');
+      return false;
+    }
+
+    if (!navigator.canShare({ files: files })) {
+      log('このブラウザではファイルのシェアがサポートされていません', 'err');
+      return false;
+    }
+
+    log('navigator.canShare({ files }) = true ✓', 'ok');
+    log('navigator.share() を呼び出し — シェアシートが表示されます...', 'ok');
+
+    var t0 = performance.now();
+    try {
+      await navigator.share({
+        title: 'Download Test Images',
+        files: files
+      });
+      var elapsed = (performance.now() - t0).toFixed(0);
+      log('シェア完了 (ユーザーが保存/共有を実行) — ' + elapsed + 'ms', 'ok');
+      return true;
+    } catch (e) {
+      var elapsed = (performance.now() - t0).toFixed(0);
+      if (e.name === 'AbortError') {
+        log('シェアがキャンセルされました — ' + elapsed + 'ms', 'warn');
+      } else {
+        log('シェア失敗: ' + e.name + ': ' + e.message + ' — ' + elapsed + 'ms', 'err');
+      }
+      return false;
+    }
+  }
+
   /* ---------- Main ---------- */
   async function startDownload() {
     var btn = document.getElementById('startBtn');
     btn.disabled = true;
     btn.textContent = 'Generating...';
 
+    var method = document.getElementById('method').value;
     var mime = document.getElementById('format').value;
     var count = parseInt(document.getElementById('count').value, 10);
     var delay = parseInt(document.getElementById('delay').value, 10) || 500;
     var ext = extFromMime(mime);
 
-    log('--- 開始: format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
+    log('--- 開始: method=' + method + ', format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
 
     // Step 1: Generate all blobs upfront
     var blobs = [];
@@ -337,20 +515,33 @@
     showPreview(blobs);
     log(blobs.length + '枚の画像プレビューを表示', 'info');
 
-    // Step 2: Trigger downloads sequentially with delay
+    // Step 2: Trigger downloads based on method
     btn.textContent = 'Downloading...';
-    for (var j = 0; j < blobs.length; j++) {
-      var filename = 'test_' + (j + 1) + '.' + ext;
-      log('[' + (j + 1) + '/' + blobs.length + '] triggerDownload("' + filename + '")', 'ok');
-      triggerDownload(blobs[j], filename);
 
-      if (j < blobs.length - 1) {
-        log(delay + 'ms 待機...', 'warn');
-        await sleep(delay);
+    if (method === 'share') {
+      // Share API: single share sheet with all files
+      await triggerShareDownload(blobs, ext, mime);
+    } else if (method === 'zip-download') {
+      // ZIP + <a download>
+      await triggerZipDownload(blobs, ext, mime);
+    } else if (method === 'zip-share') {
+      // ZIP + Share API
+      await triggerZipShare(blobs, ext, mime);
+    } else {
+      // Traditional: sequential <a download> triggers
+      for (var j = 0; j < blobs.length; j++) {
+        var filename = 'test_' + (j + 1) + '.' + ext;
+        log('[' + (j + 1) + '/' + blobs.length + '] triggerDownload("' + filename + '")', 'ok');
+        triggerDownload(blobs[j], filename);
+
+        if (j < blobs.length - 1) {
+          log(delay + 'ms 待機...', 'warn');
+          await sleep(delay);
+        }
       }
     }
 
-    log('--- 全 ' + blobs.length + ' 件のダウンロードをトリガー完了 ---', 'ok');
+    log('--- 全 ' + blobs.length + ' 件の処理完了 ---', 'ok');
     btn.disabled = false;
     btn.textContent = 'Download Start';
   }
