@@ -150,6 +150,16 @@
   </div>
 
   <div class="field">
+    <label>画像サイズ</label>
+    <select id="resolution">
+      <option value="400x300">400×300（軽量 ~5KB）</option>
+      <option value="1280x960">1280×960（中 ~50KB）</option>
+      <option value="1920x1440" selected>1920×1440（大 ~200KB）</option>
+      <option value="3840x2880">3840×2880（4K相当 ~800KB）</option>
+    </select>
+  </div>
+
+  <div class="field">
     <label>ダウンロード枚数</label>
     <select id="count">
       <option value="1">1枚</option>
@@ -231,49 +241,97 @@
   }
 
   /* ---------- Canvas Image Generator ---------- */
+  function getResolution() {
+    var val = document.getElementById('resolution').value;
+    var parts = val.split('x');
+    return { w: parseInt(parts[0], 10), h: parseInt(parts[1], 10) };
+  }
+
   function generateCanvasBlob(index, mime) {
     return new Promise(function (resolve, reject) {
       try {
+        var res = getResolution();
+        var W = res.w;
+        var H = res.h;
         var canvas = document.createElement('canvas');
-        canvas.width = 400;
-        canvas.height = 300;
+        canvas.width = W;
+        canvas.height = H;
         var ctx = canvas.getContext('2d');
         var hue = (index * 67 + 10) % 360;
+        var cx = W / 2;
+        var cy = H / 2;
+        var scale = Math.min(W, H) / 300;
 
-        // Background gradient
-        var grad = ctx.createLinearGradient(0, 0, 400, 300);
+        // Background: multi-stop radial-style gradient
+        var grad = ctx.createLinearGradient(0, 0, W, H);
         grad.addColorStop(0, 'hsl(' + hue + ', 55%, 22%)');
+        grad.addColorStop(0.5, 'hsl(' + ((hue + 20) % 360) + ', 50%, 16%)');
         grad.addColorStop(1, 'hsl(' + ((hue + 40) % 360) + ', 55%, 18%)');
         ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 400, 300);
+        ctx.fillRect(0, 0, W, H);
 
-        // Decorative circles
-        for (var i = 0; i < 6; i++) {
+        // Noise-like texture: many small semi-transparent rectangles
+        for (var n = 0; n < W * H / 400; n++) {
+          var nx = Math.random() * W;
+          var ny = Math.random() * H;
+          var nSize = Math.random() * 3 + 1;
+          ctx.fillStyle = 'hsla(' + (Math.random() * 360) + ', 40%, 50%, ' + (Math.random() * 0.08) + ')';
+          ctx.fillRect(nx, ny, nSize, nSize);
+        }
+
+        // Concentric circles
+        for (var i = 0; i < 12; i++) {
           ctx.beginPath();
-          ctx.arc(200, 150, 30 + i * 20, 0, Math.PI * 2);
-          ctx.strokeStyle = 'hsla(' + hue + ', 70%, 60%, ' + (0.15 + i * 0.03) + ')';
-          ctx.lineWidth = 2;
+          ctx.arc(cx, cy, (20 + i * 15) * scale, 0, Math.PI * 2);
+          ctx.strokeStyle = 'hsla(' + ((hue + i * 10) % 360) + ', 70%, 60%, ' + (0.1 + i * 0.02) + ')';
+          ctx.lineWidth = 1.5 * scale;
           ctx.stroke();
+        }
+
+        // Radial lines
+        for (var r = 0; r < 24; r++) {
+          var angle = (r / 24) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(angle) * 40 * scale, cy + Math.sin(angle) * 40 * scale);
+          ctx.lineTo(cx + Math.cos(angle) * 180 * scale, cy + Math.sin(angle) * 180 * scale);
+          ctx.strokeStyle = 'hsla(' + ((hue + r * 15) % 360) + ', 60%, 55%, 0.12)';
+          ctx.lineWidth = scale;
+          ctx.stroke();
+        }
+
+        // Scattered bokeh circles
+        for (var b = 0; b < 30; b++) {
+          var bx = Math.random() * W;
+          var by = Math.random() * H;
+          var br = (Math.random() * 30 + 10) * scale;
+          var bGrad = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+          bGrad.addColorStop(0, 'hsla(' + ((hue + b * 25) % 360) + ', 70%, 60%, 0.15)');
+          bGrad.addColorStop(1, 'hsla(' + ((hue + b * 25) % 360) + ', 70%, 60%, 0)');
+          ctx.fillStyle = bGrad;
+          ctx.beginPath();
+          ctx.arc(bx, by, br, 0, Math.PI * 2);
+          ctx.fill();
         }
 
         // Index label
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 36px monospace';
+        ctx.font = 'bold ' + Math.round(36 * scale) + 'px monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText('#' + (index + 1), 200, 130);
+        ctx.fillText('#' + (index + 1), cx, cy - 20 * scale);
 
-        // Format & timestamp
-        ctx.font = '14px monospace';
+        // Format, resolution & timestamp
+        ctx.font = Math.round(14 * scale) + 'px monospace';
         ctx.fillStyle = 'rgba(255,255,255,0.6)';
-        ctx.fillText(extFromMime(mime).toUpperCase() + '  |  ' + new Date().toLocaleTimeString(), 200, 175);
+        ctx.fillText(extFromMime(mime).toUpperCase() + '  |  ' + W + '×' + H + '  |  ' + new Date().toLocaleTimeString(), cx, cy + 25 * scale);
 
         // Identifier bar
         ctx.fillStyle = 'hsla(' + hue + ', 60%, 50%, 0.5)';
-        ctx.fillRect(0, 270, 400, 30);
+        var barH = Math.round(30 * scale);
+        ctx.fillRect(0, H - barH, W, barH);
         ctx.fillStyle = '#fff';
-        ctx.font = '11px monospace';
-        ctx.fillText('Browser Download Test  —  Image ' + (index + 1), 200, 288);
+        ctx.font = Math.round(11 * scale) + 'px monospace';
+        ctx.fillText('Browser Download Test  —  Image ' + (index + 1), cx, H - barH / 2);
 
         canvas.toBlob(function (blob) {
           if (blob) {
@@ -281,7 +339,7 @@
           } else {
             reject(new Error('canvas.toBlob returned null for ' + mime));
           }
-        }, mime, 0.92);
+        }, mime, 0.95);
       } catch (e) {
         reject(e);
       }
@@ -490,7 +548,8 @@
     var delay = isNaN(delayRaw) ? 500 : delayRaw;
     var ext = extFromMime(mime);
 
-    log('--- 開始: method=' + method + ', format=' + ext + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
+    var res = getResolution();
+    log('--- 開始: method=' + method + ', format=' + ext + ', size=' + res.w + '×' + res.h + ', count=' + count + ', delay=' + delay + 'ms ---', 'ok');
 
     // Step 1: Generate all blobs upfront
     var blobs = [];
